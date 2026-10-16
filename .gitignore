@@ -1,0 +1,6 @@
+.DS_Store
+*.app
+*.xctest
+*.xctestrun
+*.xcresult
+*.mobileprovision
