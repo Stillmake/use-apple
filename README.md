@@ -14,7 +14,7 @@ curl -d '{"using":"id","value":"com.apple.settings.bluetooth"}' localhost:8100/t
 **API:**
 
 - `GET /status`, `/ui`, `/screenshot`
-- `POST /launch`, `/app`, `/terminate`, `/tap`, `/longpress`, `/swipe`, `/type`, `/find`, `/home`, `/quit`
+- `POST /launch`, `/app`, `/terminate`, `/tap`, `/longpress`, `/swipe`, `/type`, `/find`, `/screenshot`, `/home`, `/quit`
 
 Each route is documented at the top of the embedded server code.
 

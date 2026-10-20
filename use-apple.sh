@@ -112,7 +112,9 @@ cat > "$OUT/WDALite.m" <<'OBJC'
 //   GET  /status                                  -> {ready, app}
 //   GET  /ui                                      -> {app, screen:[w,h], elements:[{type, label?, id?, value?, placeholder?,
 //                                                    selected?, disabled?, rect:[x,y,w,h]}]}  on-screen elements, in points
-//   GET  /screenshot                              -> {png}               base64
+//   GET  /screenshot                              -> {jpeg}              base64
+//   POST /screenshot {using, value} | {rect}      -> {jpeg} one element, or rect:[x,y,w,h] in points cropped from the screen;
+//                                                    quality? 0–1, default 0.8
 //   POST /app        {bundleId}                   -> attach to (activate) an app; "com.apple.springboard" for home
 //   POST /launch     {bundleId, args?, env?}      -> launch fresh and attach
 //   POST /terminate  {bundleId}
@@ -227,8 +229,25 @@ static id Dispatch(NSString *route, NSDictionary *b)
              @"screen": @[@(lround(root.frame.size.width)), @(lround(root.frame.size.height))],
              @"elements": [NSOrderedSet orderedSetWithArray:elements].array};
   }
-  if ([route isEqual:@"GET /screenshot"]) {
-    return @{@"png": [XCUIScreen.mainScreen.screenshot.PNGRepresentation base64EncodedStringWithOptions:0]};
+  if ([route hasSuffix:@" /screenshot"]) {
+    UIImage *image;
+    if ([route hasPrefix:@"GET"]) {
+      image = XCUIScreen.mainScreen.screenshot.image;
+    } else if (b[@"using"]) {
+      image = Find(b).screenshot.image;
+    } else {
+      NSArray<NSNumber *> *r = b[@"rect"];
+      if (r.count != 4) @throw [NSException exceptionWithName:@"400" reason:@"Pass {using, value} or {rect:[x,y,w,h]}" userInfo:nil];
+      CGImageRef full = XCUIScreen.mainScreen.screenshot.image.CGImage;
+      CGFloat s = CGImageGetWidth(full) / UIScreen.mainScreen.bounds.size.width;
+      CGImageRef crop = CGImageCreateWithImageInRect(full, CGRectMake(r[0].doubleValue * s, r[1].doubleValue * s,
+                                                                      r[2].doubleValue * s, r[3].doubleValue * s));
+      if (!crop) @throw [NSException exceptionWithName:@"400" reason:@"rect is outside the screen" userInfo:nil];
+      image = [UIImage imageWithCGImage:crop];
+      CGImageRelease(crop);
+    }
+    NSData *jpeg = UIImageJPEGRepresentation(image, [b[@"quality"] ?: @0.8 doubleValue]);
+    return @{@"jpeg": [jpeg base64EncodedStringWithOptions:0]};
   }
   if ([route isEqual:@"POST /app"]) {
     gApp = [[XCUIApplication alloc] initWithBundleIdentifier:b[@"bundleId"]];
@@ -325,7 +344,7 @@ static void Serve(int fd)
     @try {
       result = @{@"value": Dispatch(route, [body isKindOfClass:NSDictionary.class] ? body : @{})};
     } @catch (NSException *e) {
-      status = [e.name isEqual:@"404"] ? 404 : 500;
+      status = [e.name isEqual:@"404"] ? 404 : [e.name isEqual:@"400"] ? 400 : 500;
       result = @{@"error": e.reason ?: e.name};
     }
   });
