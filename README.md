@@ -14,6 +14,7 @@ Then:
 ```sh
 ./use-apple.sh              # the USB-connected device
 ./use-apple.sh <sim-udid>   # a simulator
+./use-apple.sh <udid> 8101  # another device on another port
 
 curl localhost:8100/ui      # what's on screen, as JSON
 curl -d '{"bundleId":"com.apple.Preferences"}' localhost:8100/launch
@@ -35,5 +36,7 @@ These routes live in the `ROUTES` block of `use-apple.sh`, documented at its top
 ```
 
 The runner itself keeps only `GET /status`, `POST /routes` (replace all routes with a JS source), `POST /eval` (run JS in the routes' context, for one-offs) and `POST /quit`, documented at the top of the embedded server code.
+
+**Several agents** can share a device: if it already has a server, the script prints that server's port and exits instead of installing again.
 
 **Devices** need a development profile that includes the device, plus Developer Mode and UI Automation turned on. The script finds the profile and certificate on its own. To stop a session from the device, open **Use ** and tap **Stop Automation**.

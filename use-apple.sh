@@ -3,7 +3,10 @@
 # below) into a runner without an Xcode project and runs it on a simulator or the USB-connected device.
 # Needs only Xcode: devices are listed and forwarded through macOS's own usbmuxd.
 #
-#   ./use-apple.sh [udid] [port]   udid defaults to the only USB device
+#   ./use-apple.sh [udid] [port]   udid defaults to the only USB device, port to 8100
+#
+# One server per device: when the device already has one, the script prints its port and exits instead of reinstalling.
+# Run several devices at once on different ports; a port already in use is refused.
 #
 # The runner is only a fixed core; every route is JavaScript in the ROUTES block below, which is pushed to the running
 # server on start and again whenever this file is saved with that block changed. Routes change without a rebuild.
@@ -93,6 +96,23 @@ PORT=${2:-8100}
 BUNDLE_ID=${WDA_BUNDLE_ID:-com.example.useapple}
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 OUT=${TMPDIR:-/tmp}/wdalite-$UDID
+
+# One server per device: when this device already has one, from any session, point at it instead of reinstalling.
+# A device's server is found by its USB forwarder, a simulator's by the runner process inside that simulator.
+RUNNING=$( {
+  ps -ax -o command | sed -n "s/.* forward $UDID \([0-9]*\)$/\1/p"
+  for pid in $(pgrep -f "Devices/$UDID/.*WDALite-Runner.app/XCTRunner"); do
+    lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN -Fn | sed -n 's/^n.*:\([0-9]*\)$/\1/p'
+  done
+} | head -1 ) || true
+if [[ -n $RUNNING ]] && curl -s -m 2 "localhost:$RUNNING/status" >/dev/null; then
+  echo "WDALite already running on $UDID -> try: curl localhost:$RUNNING/status"
+  exit 0
+fi
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null; then
+  echo "Port $PORT is in use; pick another: use-apple.sh $UDID <port>" >&2
+  exit 1
+fi
 
 if xcrun simctl list devices | grep -q "$UDID"; then
   SDK=iphonesimulator TARGET=$(uname -m)-apple-ios17.0-simulator
