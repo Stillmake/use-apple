@@ -173,6 +173,7 @@ cat > "$OUT/WDALite.m" <<'OBJC'
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
 #import <IOKit/IOKitLib.h>
+#import <objc/message.h>
 #import <netinet/in.h>
 #import <sys/socket.h>
 
@@ -320,6 +321,19 @@ static JSContext *NewContext(void)
   };
   ctx[@"log"] = ^{
     NSLog(@"WDALite: %@", [JSContext.currentArguments componentsJoinedByString:@" "]);
+  };
+  // One touch at a screen point, held for `hold` seconds, started without waiting for it to finish: bursts timed by the
+  // caller keep exact gaps. The synthesizer requires a completion block, which `send` cannot pass (a nil one crashes).
+  ctx[@"tapAsync"] = ^(double x, double y, double hold) {
+    id record = ((id (*)(id, SEL, NSString *, long long))objc_msgSend)([NSClassFromString(@"XCSynthesizedEventRecord") alloc],
+      NSSelectorFromString(@"initWithName:interfaceOrientation:"), @"tapAsync", UIInterfaceOrientationPortrait);
+    id path = ((id (*)(id, SEL, CGPoint, double))objc_msgSend)([NSClassFromString(@"XCPointerEventPath") alloc],
+      NSSelectorFromString(@"initForTouchAtPoint:offset:"), CGPointMake(x, y), 0);
+    ((void (*)(id, SEL, double))objc_msgSend)(path, NSSelectorFromString(@"liftUpAtOffset:"), hold);
+    ((void (*)(id, SEL, id))objc_msgSend)(record, NSSelectorFromString(@"addPointerEventPath:"), path);
+    id synthesizer = ((id (*)(id, SEL))objc_msgSend)(XCUIDevice.sharedDevice, NSSelectorFromString(@"eventSynthesizer"));
+    ((void (*)(id, SEL, id, void (^)(BOOL, NSError *)))objc_msgSend)(synthesizer,
+      NSSelectorFromString(@"synthesizeEvent:completion:"), record, ^(BOOL ok, NSError *error) {});
   };
   return ctx;
 }
