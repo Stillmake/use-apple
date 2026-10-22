@@ -154,6 +154,7 @@ cat > "$OUT/WDALite.m" <<'OBJC'
 #import <JavaScriptCore/JavaScriptCore.h>
 #import <UIKit/UIKit.h>
 #import <XCTest/XCTest.h>
+#import <IOKit/IOKitLib.h>
 #import <netinet/in.h>
 #import <sys/socket.h>
 
@@ -438,7 +439,15 @@ static void Serve(int fd)
                                                    queue:NSOperationQueue.mainQueue
                                               usingBlock:^(NSNotification *n) { installStop(n.object); }];
 
+  // Keep the display awake while serving, whichever app is in front; the iOS SDK exports IOPMLib but omits its header.
+  extern IOReturn IOPMAssertionCreateWithName(CFStringRef, uint32_t, CFStringRef, uint32_t *);
+  extern IOReturn IOPMAssertionRelease(uint32_t);
+  uint32_t awake;
+  IOReturn r = IOPMAssertionCreateWithName(CFSTR("PreventUserIdleDisplaySleep"), 255, CFSTR("WDALite serving"), &awake);
+  NSAssert(r == kIOReturnSuccess, @"Cannot keep the display awake: 0x%x", r);
+
   while (!gQuit) [NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:1]];
+  IOPMAssertionRelease(awake);
   stopWindow.hidden = YES;
   close(s);
 }
@@ -667,7 +676,7 @@ lipo "$APP/XCTRunner" -thin "${TARGET%%-*}" -output "$APP/XCTRunner"
 
 xcrun --sdk $SDK clang -fobjc-arc -fmodules -bundle -target "$TARGET" \
   -F"$PLAT/Library/Frameworks" -F"$PLAT/Library/PrivateFrameworks" -framework XCTest -framework XCUIAutomation \
-  -framework JavaScriptCore \
+  -framework JavaScriptCore -framework IOKit \
   -Xlinker -rpath -Xlinker @executable_path/Frameworks -Xlinker -rpath -Xlinker @loader_path/../../Frameworks \
   -o "$XCT/WDALite" "$OUT/WDALite.m"
 cat > "$XCT/Info.plist" <<EOF
@@ -732,7 +741,9 @@ EOF
 
 # Braced so bash parses the rest before running it: bash reads a script as it goes, and this file is edited live.
 {
-  [[ $SDK == iphoneos ]] && python3 -I -c "$PY" forward "$UDID" "$PORT" &
+  # Background python itself, not a `[[ ]] && python` list: that runs in a subshell, `jobs -p` then holds the subshell,
+  # and the EXIT trap would leave the forwarder orphaned on the port after a failed run.
+  if [[ $SDK == iphoneos ]]; then python3 -I -c "$PY" forward "$UDID" "$PORT" & fi
   # Push the routes once the server answers, then again whenever a save changes them (a push resets their state).
   (
     until curl -s -m 1 "localhost:$PORT/status" >/dev/null; do sleep 1; done
