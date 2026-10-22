@@ -4,6 +4,7 @@
 # Needs only Xcode: devices are listed and forwarded through macOS's own usbmuxd.
 #
 #   ./use-apple.sh [udid] [port]   udid defaults to the only USB device, port to 8100
+#   ./use-apple.sh clean [udid]    stop the device's server, uninstall the runner and delete its build
 #
 # One server per device: when the device already has one, the script prints its port and exits instead of reinstalling.
 # Run several devices at once on different ports; a port already in use is refused.
@@ -87,9 +88,12 @@ elif cmd == 'forward':
 EOF
 )
 
+CLEAN=
+[[ ${1:-} == clean ]] && { CLEAN=1; shift; }
 if [[ -z ${1:-} ]]; then
   DEVICES=($(python3 -I -c "$PY" list))
-  (( ${#DEVICES[@]} == 1 )) || { echo "usage: use-apple.sh [udid] [port]; USB devices: ${DEVICES[*]:-none}" >&2; exit 1; }
+  (( ${#DEVICES[@]} == 1 )) || {
+    echo "usage: use-apple.sh [udid] [port] | use-apple.sh clean [udid]; USB devices: ${DEVICES[*]:-none}" >&2; exit 1; }
 fi
 UDID=${1:-${DEVICES[0]:-}}
 PORT=${2:-8100}
@@ -105,6 +109,20 @@ RUNNING=$( {
     lsof -nP -a -p "$pid" -iTCP -sTCP:LISTEN -Fn | sed -n 's/^n.*:\([0-9]*\)$/\1/p'
   done
 } | head -1 ) || true
+if [[ -n $CLEAN ]]; then
+  # Quit first so the runner releases its keep-awake assertion itself; the session that started it then exits.
+  # Uninstalling kills a runner that did not quit, and powerd drops a dead process's assertions.
+  [[ -n $RUNNING ]] && curl -s -m 5 -X POST "localhost:$RUNNING/quit" >/dev/null || true
+  for _ in {1..30}; do pgrep -f "xcodebuild test-without-building -xctestrun $OUT/" >/dev/null || break; sleep 1; done
+  if xcrun simctl list devices | grep -q "$UDID"; then
+    xcrun simctl uninstall "$UDID" "$BUNDLE_ID"
+  else
+    xcrun devicectl device uninstall app --device "$UDID" "$BUNDLE_ID" >/dev/null
+  fi
+  rm -rf "$OUT"
+  echo "WDALite removed from $UDID"
+  exit 0
+fi
 if [[ -n $RUNNING ]] && curl -s -m 2 "localhost:$RUNNING/status" >/dev/null; then
   echo "WDALite already running on $UDID -> try: curl localhost:$RUNNING/status"
   exit 0
@@ -131,7 +149,7 @@ XCT=$APP/PlugIns/WDALite.xctest
 rm -rf "$OUT" && mkdir -p "$OUT"
 cat > "$OUT/WDALite.m" <<'OBJC'
 // WDALite — a single-file XCUITest automation server whose routes are JavaScript, loaded at runtime.
-// HTTP/JSON on loopback port $WDA_PORT (default 8100): the host's localhost on a simulator, USB-only via iproxy on a device.
+// HTTP/JSON on loopback port $WDA_PORT (default 8100): the host's localhost on a simulator, USB-only via the script's usbmuxd forwarder on a device.
 //
 // Native routes:
 //   GET  /status                 -> {ready, routes}
@@ -470,11 +488,9 @@ OBJC
 //   POST /app        {bundleId}                 -> {app}   attach to and activate an app; it stays attached across reloads
 //   POST /launch     {bundleId, args?, env?}    -> {app}   launch fresh and attach
 //   POST /terminate  {bundleId}
-//   POST /find       {element}                  -> element & {hittable}
 //   POST /wait       {element, gone?}           -> element & {hittable} once it exists, or null once it is gone;
 //                                                  408 at the timeout
-//   POST /tap        {target, double?}
-//   POST /longpress  {target, duration?}        seconds, default 1
+//   POST /tap        {target, double?, duration?}  a duration in seconds holds the press (long press)
 //   POST /swipe      {from, to, velocity?}      from/to are targets; a flick at velocity points/s, default 1500
 //   POST /scroll     {direction, in?, until?, max?}
 //                                               -> element & {hittable} | null   direction "up" | "down" | "left" |
@@ -619,9 +635,6 @@ var routes = {
   'POST /terminate'(b) {
     send(App(b.bundleId), 'terminate');
   },
-  'POST /find'(b) {
-    return located(find(b));
-  },
   'POST /wait'(b) {
     const e = query(b);
     if (b.gone) {
@@ -632,10 +645,9 @@ var routes = {
     return located(e);
   },
   'POST /tap'(b) {
-    send(at(b), b.double ? 'doubleTap' : 'tap');
-  },
-  'POST /longpress'(b) {
-    send(at(b), 'pressForDuration:', b.duration ?? 1);
+    if (b.double && b.duration != null) fail(400, 'Tap with one of double or duration');
+    const point = at(b);
+    b.duration != null ? send(point, 'pressForDuration:', b.duration) : send(point, b.double ? 'doubleTap' : 'tap');
   },
   'POST /swipe'(b) {
     send(at(b.from), 'pressForDuration:thenDragToCoordinate:withVelocity:thenHoldForDuration:', 0, at(b.to),

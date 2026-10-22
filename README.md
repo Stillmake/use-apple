@@ -25,7 +25,7 @@ curl -d '{"direction":"down","until":{"label":"Fonts"}}' localhost:8100/scroll
 **API:**
 
 - `GET /ui`, `/screenshot`
-- `POST /launch`, `/app`, `/terminate`, `/find`, `/wait`, `/tap`, `/longpress`, `/swipe`, `/scroll`, `/type`, `/screenshot`, `/home`, `/lock`
+- `POST /launch`, `/app`, `/terminate`, `/wait`, `/tap`, `/swipe`, `/scroll`, `/type`, `/screenshot`, `/home`, `/lock`
 
 Elements are located by one of `{id}`, `{label}` or `{predicate}`, and every route describes them in the same shape as `/ui`. Gestures take an element or a point `{x, y}`.
 
